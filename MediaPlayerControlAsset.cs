@@ -18,18 +18,25 @@ namespace RenderHeads.Media.AVProVideo.Playables
 	[System.Serializable]
 	public class MediaPlayerControlAsset : PlayableAsset
 	{
+		public bool scrubInEditor = false;
 		public Object binding { get; set; }
 		//public ExposedReference<MediaPlayer> mediaPlayer;
 
+		[Space]
 		public MediaReference mediaReference;
-
-		[Range(0f, 1f)]
-		public float audioVolume = 1f;
+		[Space]
 		[Min(0f)]
 		public float startTime = 0.0f;
 		public bool pauseOnEnd = true;
-		public bool frameAccurateSeek = false;
+		[Space]
+		[Range(0f, 1f)]
+		public float audioVolume = 1f;
+		[Space]
 		public double preloadTime = 0.3;
+		public bool frameAccurateSeek = false;
+		[Space]
+		public bool enforceSyncOnDrift = false;
+		public double driftTolerance = 0.5;
 
 		public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
 		{
@@ -45,6 +52,9 @@ namespace RenderHeads.Media.AVProVideo.Playables
 			behaviour.frameAccurateSeek = frameAccurateSeek;
 			behaviour.stopRenderCoroutine = behaviour.mediaPlayer.GetType().GetMethod("StopRenderCoroutine", BindingFlags.NonPublic | BindingFlags.Instance);
 			behaviour.preloadTime = preloadTime;
+			behaviour.scrubInEditor = scrubInEditor;
+			behaviour.enforceSyncOnDrift = enforceSyncOnDrift;
+			behaviour.driftTolerance = driftTolerance;
 
 			return playable;
 		}
