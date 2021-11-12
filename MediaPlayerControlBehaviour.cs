@@ -20,11 +20,13 @@ namespace RenderHeads.Media.AVProVideo.Playables
 {
     public class MediaPlayerControlBehaviour : PlayableBehaviour
     {
+        public MediaPlayerControlAsset controlAsset;
         public MediaPlayer mediaPlayer = null;
 
         public MediaReference mediaReference = null;
         public float audioVolume = 1f;
         public double startTime = 0.0;
+        public bool loop = false;
         public bool pauseOnEnd = true;
         public bool frameAccurateSeek = false;
         public MethodInfo stopRenderCoroutine = null;
@@ -34,8 +36,13 @@ namespace RenderHeads.Media.AVProVideo.Playables
         public double driftTolerance = 0.5;
         
         private MediaReference _originalMediaReference = null;
+        private bool _originalLooping;
         private bool _preparing = false;
         private float _lastFrameTime = 0;
+        private double clipLength {
+            get => controlAsset.clipLength;
+            set => controlAsset.clipLength = value;
+        } 
 
         void DoSeek(double time)
         {
@@ -54,7 +61,7 @@ namespace RenderHeads.Media.AVProVideo.Playables
         {
             if (mediaPlayer == null) return;
 
-            if (mediaPlayer.MediaOpened || _preparing)
+            if (_preparing)
                 return;
 
             if ( !Application.isPlaying && !scrubInEditor ) {
@@ -62,13 +69,15 @@ namespace RenderHeads.Media.AVProVideo.Playables
             }
             if (mediaPlayer.MediaSource == MediaSource.Reference ? mediaPlayer.MediaReference != null : mediaPlayer.MediaPath.Path != "")
             {
-                if(mediaReference != null && mediaReference != mediaPlayer.MediaReference) {
-                    _originalMediaReference = mediaPlayer.MediaReference;
-                    mediaPlayer.OpenMedia(mediaReference, false);
-                }
-                else
-                {
-                    mediaPlayer.OpenMedia(mediaPlayer.MediaReference, false);
+                _originalLooping = mediaPlayer.Loop;
+                mediaPlayer.Loop = loop;
+                if ( mediaReference != mediaPlayer.MediaReference || !mediaPlayer.MediaOpened ) {
+                    if ( mediaReference != null && mediaReference != mediaPlayer.MediaReference ) {
+                        _originalMediaReference = mediaPlayer.MediaReference;
+                        mediaPlayer.OpenMedia(mediaReference, false);
+                    } else {
+                        mediaPlayer.OpenMedia(mediaPlayer.MediaReference, false);
+                    }
                 }
 
                 if (frameAccurateSeek) stopRenderCoroutine?.Invoke(mediaPlayer, null);
@@ -79,7 +88,7 @@ namespace RenderHeads.Media.AVProVideo.Playables
 
         public void StopMedia()
         {
-            if(mediaPlayer != null && mediaPlayer.Control != null)
+            if(mediaPlayer != null && mediaPlayer.Control != null && mediaReference == mediaPlayer.MediaReference &&  mediaPlayer.Control.IsPlaying())
             {
                 mediaPlayer.Control.Stop();
             }
@@ -87,8 +96,14 @@ namespace RenderHeads.Media.AVProVideo.Playables
         }
 
         public override void OnPlayableDestroy(Playable playable) {
-            if ( _originalMediaReference != null ) {
+            if ( Application.isPlaying && _originalMediaReference != null ) {
                 mediaPlayer.OpenMedia(_originalMediaReference, autoPlay: false);
+            }
+            if ( !Application.isPlaying && !scrubInEditor ) {
+                return;
+            }
+            if ( mediaPlayer != null && mediaPlayer.Control != null ) {
+                mediaPlayer.Loop = _originalLooping;
             }
         }
 
@@ -99,8 +114,8 @@ namespace RenderHeads.Media.AVProVideo.Playables
                 if ( !Application.isPlaying && !scrubInEditor ) {
                     return;
                 }
-                if ( !_preparing // fix race condition where OnBehaviourPlay is run before PrepareMedia
-                     && playable.GetTime() == 0
+                if ( !_preparing // fix race condition where OnBehaviourPlay is run before PrepareMedia, or if else unprepared
+                     // && playable.GetTime() == 0 
                      && info.evaluationType == FrameData.EvaluationType.Playback
                      && info.effectivePlayState == PlayState.Playing ) {
                     PrepareMedia();
@@ -145,27 +160,40 @@ namespace RenderHeads.Media.AVProVideo.Playables
         {
             if (mediaPlayer != null) 
             {
-                if (mediaPlayer.Control != null)
-                {
-                    if (frameAccurateSeek)
-                    {
+                if ( mediaPlayer.Control != null ) {
+                    double _clipLength = 0;
+                    TimeRanges ranges = mediaPlayer.Control.GetSeekableTimes();
+                    for ( int i = 0; i < ranges.Count; i++ ) {
+                        _clipLength = Math.Max(_clipLength, ranges[i].EndTime);
+                    }
+                    if ( 0 < _clipLength && mediaReference == mediaPlayer.MediaReference && !_preparing ) {
+                        clipLength = _clipLength;
+                    }
+
+                    if ( frameAccurateSeek ) {
                         mediaPlayer.Control.Seek(startTime + playable.GetTime());
                         WaitForFinishSeek();
-                    }
-                    else if( !Application.isPlaying && scrubInEditor )
-                    {
+                    } else if ( !Application.isPlaying && scrubInEditor ) {
                         mediaPlayer.Control.SeekFast(startTime + playable.GetTime());
                         mediaPlayer.Player.Update();
                         mediaPlayer.Player.EndUpdate();
                         mediaPlayer.Player.Render();
                     }
-                    if ( enforceSyncOnDrift && Time.time - _lastFrameTime > 1f ) {
+
+                    if ( enforceSyncOnDrift && Application.isPlaying && Time.time - _lastFrameTime > 1f ) {
                         _lastFrameTime = Time.time;
-                        double offset = mediaPlayer.Control.GetCurrentTime() - (startTime + playable.GetTime());
-                        // Debug.Log("Video drift: "+offset );
+                        double adjustedPlayableTime = ((startTime + playable.GetTime()) % clipLength); // todo: still assumes 1.0 normal playback speed
+                        if ( mediaPlayer.Control.IsLooping() && 0 < clipLength ) {
+                            adjustedPlayableTime %= clipLength;
+                        }
+                        double offset = mediaPlayer.Control.GetCurrentTime() - adjustedPlayableTime;
+                        if ( offset < -clipLength * .9 ) { // if we're almost full length behind we've probably looped the video
+                            offset += clipLength;
+                        }
+                        // Debug.Log("Video drift: " + offset);
                         if ( Math.Abs(offset) > driftTolerance ) {
-                            Debug.Log("Video drift correction: "+offset);
-                            mediaPlayer.Control.Seek(startTime + playable.GetTime());
+                            Debug.Log("Video drift correction: " + offset);
+                            mediaPlayer.Control.Seek(adjustedPlayableTime);
                         }
                     }
                 }

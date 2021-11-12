@@ -3,23 +3,27 @@
 // existing in Unity 2017 etc, and it throws an error due to missing reference
 //#define AVPRO_PACKAGE_TIMELINE
 #if (UNITY_2018_1_OR_NEWER && AVPRO_PACKAGE_TIMELINE)
+using System;
 using UnityEngine;
 using UnityEngine.Playables;
 using UnityEngine.Timeline;
 using System.Collections.Generic;
 using System.Reflection;
+using Object = UnityEngine.Object;
 
 //-----------------------------------------------------------------------------
 // Copyright 2020-2021 RenderHeads Ltd.  All rights reserved.
 //-----------------------------------------------------------------------------
 
-namespace RenderHeads.Media.AVProVideo.Playables
-{
+namespace RenderHeads.Media.AVProVideo.Playables {
 	[System.Serializable]
-	public class MediaPlayerControlAsset : PlayableAsset
-	{
+	public class MediaPlayerControlAsset : PlayableAsset {
 		public bool scrubInEditor = false;
-		public Object binding { get; set; }
+		public double clipLength = -1;
+		public Object binding {
+			get;
+			set;
+		}
 		//public ExposedReference<MediaPlayer> mediaPlayer;
 
 		[Space]
@@ -27,6 +31,7 @@ namespace RenderHeads.Media.AVProVideo.Playables
 		[Space]
 		[Min(0f)]
 		public float startTime = 0.0f;
+		public bool loop = false;
 		public bool pauseOnEnd = true;
 		[Space]
 		[Range(0f, 1f)]
@@ -38,11 +43,18 @@ namespace RenderHeads.Media.AVProVideo.Playables
 		public bool enforceSyncOnDrift = false;
 		public double driftTolerance = 0.5;
 
-		public override Playable CreatePlayable(PlayableGraph graph, GameObject owner)
-		{
-			var playable = ScriptPlayable<MediaPlayerControlBehaviour>.Create(graph);
+		private ScriptPlayable<MediaPlayerControlBehaviour> _playable;
 
-			var behaviour = playable.GetBehaviour();
+		private void OnValidate() {
+			UpdatePlayable();
+		}
+
+		void UpdatePlayable() {
+			var behaviour = _playable.GetBehaviour();
+			if ( behaviour == null ) {
+				return;
+			}
+			behaviour.controlAsset = this;
 			//behaviour.mediaPlayer = mediaPlayer.Resolve(graph.GetResolver());
 			behaviour.audioVolume = audioVolume;
 			behaviour.pauseOnEnd = pauseOnEnd;
@@ -55,8 +67,19 @@ namespace RenderHeads.Media.AVProVideo.Playables
 			behaviour.scrubInEditor = scrubInEditor;
 			behaviour.enforceSyncOnDrift = enforceSyncOnDrift;
 			behaviour.driftTolerance = driftTolerance;
+			behaviour.loop = loop;
+		}
 
-			return playable;
+		public override double duration { // this is used as the default duration of the clip when created
+			get {
+				return clipLength <= 0 ? 30 : clipLength - startTime;
+			}
+		}
+
+		public override Playable CreatePlayable(PlayableGraph graph, GameObject owner) {
+			_playable = ScriptPlayable<MediaPlayerControlBehaviour>.Create(graph);
+			UpdatePlayable();
+			return _playable;
 		}
 	}
 }

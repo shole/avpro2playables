@@ -56,19 +56,23 @@ namespace RenderHeads.Media.AVProVideo.Playables
 			int inputPort = 0;
 			foreach (TimelineClip clip in clips)
 			{
-				ScriptPlayable<MediaPlayerControlBehaviour> scriptPlayable =
-					(ScriptPlayable<MediaPlayerControlBehaviour>)playable.GetInput(inputPort);
+				ScriptPlayable<MediaPlayerControlBehaviour> scriptPlayable = (ScriptPlayable<MediaPlayerControlBehaviour>)playable.GetInput(inputPort);
 
 				MediaPlayerControlBehaviour behaviour = scriptPlayable.GetBehaviour();
 
-				if (behaviour != null)
-				{
+				if ( behaviour != null ) {
 					double preloadTime = Math.Max(0.0, behaviour.preloadTime);
-					if (director.time >= clip.start + clip.duration ||
-						director.time <= clip.start - preloadTime)
-						behaviour.StopMedia();
-					else if (director.time > clip.start - preloadTime)
-						behaviour.PrepareMedia();
+					if ( !Application.isPlaying && behaviour.scrubInEditor ) {
+						if ( (director.time < clip.start || clip.start + clip.end < director.time) ) { // stop in editor scrubbing.. 
+							behaviour.StopMedia();
+						} else if ( clip.start <= director.time && director.time < clip.end ) { // preload while in preload window.. else play call will force load
+							behaviour.PrepareMedia();
+						}
+					} else if ( clip.start - preloadTime <= director.time && director.time < clip.start ) { // preload while in preload window.. else play call will force load
+						if ( !behaviour.mediaPlayer.Control.IsPlaying() ) { // only preload if player not already playing
+							behaviour.PrepareMedia();
+						}
+					}
 				}
 
 				++inputPort;
