@@ -1,7 +1,7 @@
 ﻿// You need to define AVPRO_PACKAGE_TIMELINE manually to use this script
 // We could set up the asmdef to reference the package, but the package doesn't 
 // existing in Unity 2017 etc, and it throws an error due to missing reference
-//#define AVPRO_PACKAGE_TIMELINE
+#define AVPRO_PACKAGE_TIMELINE
 #if (UNITY_2018_1_OR_NEWER && AVPRO_PACKAGE_TIMELINE)
 using UnityEngine;
 using UnityEngine.Playables;
@@ -69,7 +69,7 @@ namespace RenderHeads.Media.AVProVideo.Playables
 							behaviour.PrepareMedia();
 						}
 					} else if ( clip.start - preloadTime <= director.time && director.time < clip.start ) { // preload while in preload window.. else play call will force load
-						if ( !behaviour.mediaPlayer.Control.IsPlaying() ) { // only preload if player not already playing
+						if ( behaviour.mediaPlayer!=null && behaviour.mediaPlayer.Control!=null && !behaviour.mediaPlayer.Control.IsPlaying() ) { // only preload if player not already playing
 							behaviour.PrepareMedia();
 						}
 					}

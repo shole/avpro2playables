@@ -1,7 +1,7 @@
 ﻿// You need to define AVPRO_PACKAGE_TIMELINE manually to use this script
 // We could set up the asmdef to reference the package, but the package doesn't 
 // existing in Unity 2017 etc, and it throws an error due to missing reference
-//#define AVPRO_PACKAGE_TIMELINE
+#define AVPRO_PACKAGE_TIMELINE
 #if (UNITY_2018_1_OR_NEWER && AVPRO_PACKAGE_TIMELINE)
 using System;
 using UnityEngine;
@@ -18,8 +18,9 @@ using Debug = UnityEngine.Debug;
 
 namespace RenderHeads.Media.AVProVideo.Playables
 {
-    public class MediaPlayerControlBehaviour : PlayableBehaviour
-    {
+    public class MediaPlayerControlBehaviour : PlayableBehaviour {
+        static Dictionary<MediaPlayer, MediaPlayerControlBehaviour> playerOwners=new Dictionary<MediaPlayer, MediaPlayerControlBehaviour>();
+        
         public MediaPlayerControlAsset controlAsset;
         public MediaPlayer mediaPlayer = null;
 
@@ -32,8 +33,10 @@ namespace RenderHeads.Media.AVProVideo.Playables
         public MethodInfo stopRenderCoroutine = null;
         public double preloadTime = 0.3;
         public bool scrubInEditor = false;
+        
         public bool enforceSyncOnDrift = false;
         public double driftTolerance = 0.5;
+        public bool waitForSync = false;
         
         private MediaReference _originalMediaReference = null;
         private bool _originalLooping;
@@ -42,7 +45,48 @@ namespace RenderHeads.Media.AVProVideo.Playables
         private double clipLength {
             get => controlAsset.clipLength;
             set => controlAsset.clipLength = value;
-        } 
+        }
+
+        bool IsPlayerFree() {
+            return IsPlayerOwner() || !playerOwners.ContainsKey(mediaPlayer) || playerOwners[mediaPlayer] == null  || playerOwners[mediaPlayer] == this;
+        }
+
+        bool IsPlayerOwner() {
+            if ( !playerOwners.ContainsKey(mediaPlayer) ) {
+                playerOwners.Add(mediaPlayer,this);
+                return true;
+            } else {
+                return playerOwners[mediaPlayer] == this;
+            }
+        }
+
+        bool IsPlayerFreeToTake() {
+            if ( IsPlayerFree() ) {
+                TakePlayerOwnership();
+            }
+            return IsPlayerOwner();
+        }
+
+        void TakePlayerOwnership() {
+            if ( !playerOwners.ContainsKey(mediaPlayer) ) {
+                playerOwners.Add(mediaPlayer,this);
+            } else {
+                playerOwners[mediaPlayer] = this;
+            }
+        }
+
+        void ReleasePlayerOwnership() {
+            if ( IsPlayerOwner() ) {
+                playerOwners[mediaPlayer] = null;
+            }
+        }
+
+        void StopPlayerOwner() {
+            if ( playerOwners.ContainsKey(mediaPlayer) ) {
+                playerOwners[mediaPlayer].StopMedia();
+            }
+            ReleasePlayerOwnership();
+        }
 
         void DoSeek(double time)
         {
@@ -67,8 +111,9 @@ namespace RenderHeads.Media.AVProVideo.Playables
             if ( !Application.isPlaying && !scrubInEditor ) {
                 return;
             }
-            if (mediaPlayer.MediaSource == MediaSource.Reference ? mediaPlayer.MediaReference != null : mediaPlayer.MediaPath.Path != "")
-            {
+            if ( IsPlayerFree()
+                 && mediaPlayer.MediaSource == MediaSource.Reference ? mediaPlayer.MediaReference != null : mediaPlayer.MediaPath.Path != "" ) {
+                
                 _originalLooping = mediaPlayer.Loop;
                 mediaPlayer.Loop = loop;
                 if ( mediaReference != mediaPlayer.MediaReference || !mediaPlayer.MediaOpened ) {
@@ -79,6 +124,7 @@ namespace RenderHeads.Media.AVProVideo.Playables
                         mediaPlayer.OpenMedia(mediaPlayer.MediaReference, false);
                     }
                 }
+                mediaPlayer.Control.Seek(0);
 
                 if (frameAccurateSeek) stopRenderCoroutine?.Invoke(mediaPlayer, null);
 
@@ -88,7 +134,7 @@ namespace RenderHeads.Media.AVProVideo.Playables
 
         public void StopMedia()
         {
-            if(mediaPlayer != null && mediaPlayer.Control != null && mediaReference == mediaPlayer.MediaReference &&  mediaPlayer.Control.IsPlaying())
+            if(IsPlayerOwner() && mediaPlayer != null && mediaPlayer.Control != null && mediaReference == mediaPlayer.MediaReference &&  mediaPlayer.Control.IsPlaying())
             {
                 mediaPlayer.Control.Stop();
             }
@@ -96,14 +142,17 @@ namespace RenderHeads.Media.AVProVideo.Playables
         }
 
         public override void OnPlayableDestroy(Playable playable) {
-            if ( Application.isPlaying && _originalMediaReference != null ) {
-                mediaPlayer.OpenMedia(_originalMediaReference, autoPlay: false);
-            }
+            ReleasePlayerOwnership();
+            Debug.Log("OnPlayableDestroy released ownership");
+            // if ( Application.isPlaying && _originalMediaReference != null ) {
+            //     mediaPlayer.OpenMedia(_originalMediaReference, autoPlay: false);
+            // }
             if ( !Application.isPlaying && !scrubInEditor ) {
                 return;
             }
-            if ( mediaPlayer != null && mediaPlayer.Control != null ) {
+            if ( mediaPlayer != null && mediaPlayer.Control != null && IsPlayerOwner()) {
                 mediaPlayer.Loop = _originalLooping;
+                StopMedia();
             }
         }
 
@@ -114,6 +163,13 @@ namespace RenderHeads.Media.AVProVideo.Playables
                 if ( !Application.isPlaying && !scrubInEditor ) {
                     return;
                 }
+                TakePlayerOwnership();
+                // if (!IsPlayerFreeToTake()){
+                //     Debug.Log("OnBehaviourPlay tried to take player but it was taken");
+                //     return;
+                // } else {
+                //     Debug.Log("OnBehaviourPlay took the player");
+                // }
                 if ( !_preparing // fix race condition where OnBehaviourPlay is run before PrepareMedia, or if else unprepared
                      // && playable.GetTime() == 0 
                      && info.evaluationType == FrameData.EvaluationType.Playback
@@ -123,12 +179,13 @@ namespace RenderHeads.Media.AVProVideo.Playables
                 mediaPlayer.Play();
                 if (mediaPlayer.Control != null)
                 {
-                    DoSeek(playable.GetTime());
+                    DoSeek(startTime + playable.GetTime());
                 }
-                // WaitForFinishSeek();
+                WaitForFinishSeek();
 
-                if (!Application.isPlaying || frameAccurateSeek)
+                if ( !Application.isPlaying || frameAccurateSeek ) {
                     mediaPlayer.Pause();
+                }
             }
             _preparing = false;
         }
@@ -137,6 +194,10 @@ namespace RenderHeads.Media.AVProVideo.Playables
         {
             if (mediaPlayer != null)
             {
+                if ( !IsPlayerOwner() ) {
+                    Debug.Log("OnBehaviourPause tried to use player but it was taken");
+                    return;
+                }
                 if (pauseOnEnd)
                 {
                     mediaPlayer.Pause();
@@ -147,6 +208,10 @@ namespace RenderHeads.Media.AVProVideo.Playables
 
         void WaitForFinishSeek()
         {
+            if ( !IsPlayerOwner() ) {
+                Debug.Log("WaitForFinishSeek tried to use player but it was taken");
+                return;
+            }
             Stopwatch timer = Stopwatch.StartNew(); //never get stuck
             while (mediaPlayer.Control.IsSeeking() && timer.ElapsedMilliseconds < 5000)
             {
@@ -161,6 +226,18 @@ namespace RenderHeads.Media.AVProVideo.Playables
             if (mediaPlayer != null) 
             {
                 if ( mediaPlayer.Control != null ) {
+                    if ( !IsPlayerOwner() ) {
+                        Debug.Log("ProcessFrame tried to use player but it was taken");
+                        return;
+                    }
+                    // if (  Application.isPlaying // if we're not playing, force try again now!
+                    //       && !mediaPlayer.Control.IsPlaying()
+                    //       && info.evaluationType == FrameData.EvaluationType.Playback
+                    //       && info.effectivePlayState == PlayState.Playing ) {
+                    //     // OnBehaviourPlay(playable, info);
+                    //     Debug.Log("force start in processframe");
+                    //     mediaPlayer.Play();
+                    // }
                     double _clipLength = 0;
                     TimeRanges ranges = mediaPlayer.Control.GetSeekableTimes();
                     for ( int i = 0; i < ranges.Count; i++ ) {
@@ -194,6 +271,9 @@ namespace RenderHeads.Media.AVProVideo.Playables
                         if ( Math.Abs(offset) > driftTolerance ) {
                             Debug.Log("Video drift correction: " + offset);
                             mediaPlayer.Control.Seek(adjustedPlayableTime);
+                            if ( waitForSync ) {
+                                WaitForFinishSeek();
+                            }
                         }
                     }
                 }

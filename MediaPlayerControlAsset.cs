@@ -1,7 +1,7 @@
 ﻿// You need to define AVPRO_PACKAGE_TIMELINE manually to use this script
 // We could set up the asmdef to reference the package, but the package doesn't 
 // existing in Unity 2017 etc, and it throws an error due to missing reference
-//#define AVPRO_PACKAGE_TIMELINE
+#define AVPRO_PACKAGE_TIMELINE
 #if (UNITY_2018_1_OR_NEWER && AVPRO_PACKAGE_TIMELINE)
 using System;
 using UnityEngine;
@@ -42,6 +42,7 @@ namespace RenderHeads.Media.AVProVideo.Playables {
 		[Space]
 		public bool enforceSyncOnDrift = false;
 		public double driftTolerance = 0.5;
+		public bool waitForSync = false;
 
 		private ScriptPlayable<MediaPlayerControlBehaviour> _playable;
 
@@ -67,6 +68,7 @@ namespace RenderHeads.Media.AVProVideo.Playables {
 			behaviour.scrubInEditor = scrubInEditor;
 			behaviour.enforceSyncOnDrift = enforceSyncOnDrift;
 			behaviour.driftTolerance = driftTolerance;
+			behaviour.waitForSync = waitForSync;
 			behaviour.loop = loop;
 		}
 
